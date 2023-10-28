@@ -1,4 +1,3 @@
-
 import pdb
 import argparse
 import rospy
@@ -12,7 +11,7 @@ from env.env import Env
 from util.log import TensorboardCallback
 from torch.utils.tensorboard import SummaryWriter
 import string
-from stable_baselines3 import DQN_CQL
+from stable_baselines3 import DQN_CQL, DQN
 from stable_baselines3.common.logger import configure
 
 def train(args):
@@ -23,7 +22,9 @@ def train(args):
     os.mkdir("/home/hadley/Developments/stb_rl_ros/log/"+res)
 
     env = Env(args.action_size, args.state_size)
-    model = DQN_CQL("MlpPolicy", env,
+
+    model = DQN("MlpPolicy", env,
+    # model = DQN_CQL("MlpPolicy", env,
                     learning_starts=args.learning_starts,
                     batch_size=args.batch_size,
                     tau=args.tau,
@@ -39,7 +40,7 @@ def train(args):
 
     # train the agent and display a progress bar
     model.learn(total_timesteps=args.total_timesteps,
-                progress_bar=True,
+                # progress_bar=True,
                 log_interval=1,
                 callback=TensorboardCallback())
     model.save("test")
@@ -57,9 +58,9 @@ if __name__ == '__main__':
     parser.add_argument('--episode_step', type=int, default=500)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--update_rank_frequency', type=int, default=100)
-    parser.add_argument('--learning_starts', type=int, default=1_000)
+    parser.add_argument('--learning_starts', type=int, default=10_000)
     parser.add_argument('--tau', type=float, default=0.05)
     parser.add_argument('--target_update_interval', type=int, default=1)
-    parser.add_argument('--total_timesteps', type=int, default=20_000)
+    parser.add_argument('--total_timesteps', type=int, default=1_000_000)
     args = parser.parse_args()
     train(args)

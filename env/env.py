@@ -48,6 +48,8 @@ class Env(gym.Env):
         self.min_range = 0.13
         self.cur_step = 0
         self.episode_step = 500
+        self.cur_episode = 0
+        self.rank_update_interval = 150
 
     def getGoalDistace(self):
         goal_distance = round(math.hypot(self.goal_x - self.position.x, self.goal_y - self.position.y), 2)
@@ -100,6 +102,7 @@ class Env(gym.Env):
         return scan_range + [heading, current_distance], done
 
     def setReward(self, state, done, action):
+        # pdb.set_trace()
         yaw_reward = []
         current_distance = state[-1]
         heading = state[-2]
@@ -112,6 +115,11 @@ class Env(gym.Env):
         distance_rate = 2 ** (current_distance / self.goal_distance)
         reward = ((round(yaw_reward[action] * 5, 2)) * distance_rate)
 
+        if reward < -100 or reward > 100:
+            # pdb.set_trace()
+            print(f'distance rate is: {distance_rate}, '
+                  f'yaw_reward is: {yaw_reward[action]}')
+            reward = reward
         if done:
             if self.get_goalbox: # done because of goal reached
                 # rospy.loginfo("Goal!")
@@ -151,12 +159,13 @@ class Env(gym.Env):
 
         self.cur_step += 1
         truncated = False
-        if self.episode_step <= self.cur_step:
+        if self.cur_step >= self.episode_step:
             truncated = True
+            self.status = 'timelimited'
 
-        # print(f'cur_step:{self.cur_step}'
-        #       f'reward:{reward}'
-        #       f'done:{done}'
+        # print(f'cur_step:{self.cur_step}, '
+        #     f'reward:{reward:.5f}, '
+        #       f'done:{done}, '
         #       f'truncated:{truncated}')
         return np.asarray(state), reward, done, truncated, {"status": self.status}
 
@@ -193,6 +202,10 @@ class Env(gym.Env):
         state, done = self.getState(data)
 
         self.cur_step = 0
+        self.cur_episode += 1
+
+        if self.cur_episode % self.rank_update_interval == 0:
+            self.rank += 1
 
         return np.asarray(state), {"status": self.status}
 
@@ -211,11 +224,12 @@ class Env(gym.Env):
 
         # modify target cricket ball position
         target = ModelState()
-        target.model_name = 'cricket_ball'
-        # target.pose.position.x = self.goal_x
-        # target.pose.position.y = self.goal_y
-        target.pose.position.x = 0.
-        target.pose.position.y = 0.
+        target.model_name = 'target_red_0'
+        target.pose.position.x = self.goal_x
+        target.pose.position.y = self.goal_y
+        target.pose.position.z = 0.
+        # target.pose.position.x = 0.
+        # target.pose.position.y = 0.
 
         rospy.wait_for_service('/gazebo/set_model_state')
         try:
