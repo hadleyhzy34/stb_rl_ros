@@ -8,6 +8,7 @@ from std_msgs.msg import Float32MultiArray
 import torch
 from torch.utils import tensorboard
 from env.env import Env
+# from env.gazebo import Env
 from util.log import TensorboardCallback
 from torch.utils.tensorboard import SummaryWriter
 import string
@@ -21,10 +22,12 @@ def train(args):
     res = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     os.mkdir("/home/hadley/Developments/stb_rl_ros/log/"+res)
 
-    env = Env(args.action_size, args.state_size)
+    env = Env(args.action_size,
+              args.state_size,
+              rank_update_interval=args.rank_update_interval)
 
-    model = DQN("MlpPolicy", env,
-    # model = DQN_CQL("MlpPolicy", env,
+    # model = DQN("MlpPolicy", env,
+    model = DQN_CQL("MlpPolicy", env,
                     learning_starts=args.learning_starts,
                     batch_size=args.batch_size,
                     tau=args.tau,
@@ -57,10 +60,10 @@ if __name__ == '__main__':
     parser.add_argument('--replay_buffer_size', type=int, default=10_000)
     parser.add_argument('--episode_step', type=int, default=500)
     parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--update_rank_frequency', type=int, default=100)
-    parser.add_argument('--learning_starts', type=int, default=10_000)
-    parser.add_argument('--tau', type=float, default=0.05)
+    parser.add_argument('--rank_update_interval', type=int, default=200)
+    parser.add_argument('--learning_starts', type=int, default=1000)
+    parser.add_argument('--tau', type=float, default=0.005)
     parser.add_argument('--target_update_interval', type=int, default=1)
-    parser.add_argument('--total_timesteps', type=int, default=1_000_000)
+    parser.add_argument('--total_timesteps', type=int, default=100_000)
     args = parser.parse_args()
     train(args)
