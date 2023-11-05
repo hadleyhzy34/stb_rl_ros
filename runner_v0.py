@@ -8,7 +8,7 @@ import os
 from std_msgs.msg import Float32MultiArray
 import torch
 from torch.utils import tensorboard
-from env.env import Env
+from env.env_v0 import Env
 from util.print_model import print_model
 from util.log import TensorboardCallback
 from torch.utils.tensorboard import SummaryWriter
@@ -36,6 +36,7 @@ def train(args):
                         target_update_interval=args.target_update_interval,
                         buffer_size=args.replay_buffer_size,
                         stats_window_size=1,
+                        exploration_final_eps=args.exploration_final_eps,
                         verbose=1)
     else:
         model = DQN("MlpPolicy", env,
@@ -46,6 +47,7 @@ def train(args):
                         target_update_interval=args.target_update_interval,
                         buffer_size=args.replay_buffer_size,
                         stats_window_size=1,
+                        exploration_final_eps=args.exploration_final_eps,
                         verbose=1)
 
     # set up logger
@@ -84,6 +86,7 @@ if __name__ == '__main__':
     parser.add_argument('--rank_update_interval', type=int, default=200)
     parser.add_argument('--learning_starts', type=int, default=10_000)
     parser.add_argument('--tau', type=float, default=0.005)
+    parser.add_argument('--exploration_final_eps', type=float, default=0.01)
     parser.add_argument('--target_update_interval', type=int, default=1)
     parser.add_argument('--total_timesteps', type=int, default=100_000)
     parser.add_argument('--mode', type=str, default='train')

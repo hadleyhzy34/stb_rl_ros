@@ -1,4 +1,3 @@
-from os import truncate
 import pdb
 import random
 import rospy
@@ -15,137 +14,161 @@ from std_srvs.srv import Empty
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 import gymnasium as gym
 from gymnasium import spaces
-# import gym
-# from gym import spaces
 import numpy as np
 from stable_baselines3.common.env_checker import check_env
 
 class Env(gym.Env):
     def __init__(self, args):
         super().__init__()
-        self.action_space = spaces.Discrete(args.action_size)
-        # self.observation_space = spaces.Sequence(state_size)
-        self.observation_space = spaces.Discrete(args.state_size)
+        self.namespace = args.namespace
+        if args.continuous == 'False':
+            self.action_space = spaces.Discrete(args.action_size)
+            self.mode = 'discrete'
+        else:
+            self.action_space = spaces.Box(low=-1.,high=1.,shape=(2,),dtype=np.float32)
+            self.mode = 'continuous'
         self.observation_space = spaces.Box(low=-np.inf,high=np.inf,shape=(362,),dtype=np.float32)
         self.goal_x = 0
         self.goal_y = 0
-        self.namespace = args.namespace
         self.status = 'initialized'
         self.map_x = -10.
         self.map_y = -10.
         self.rank = 0
         self.heading = 0
         self.action_size = args.action_size
-        self.initGoal = True
-        self.get_goalbox = False  # reach goal or not
         self.position = Pose()
         self.pub_cmd_vel = rospy.Publisher(self.namespace+'/cmd_vel', Twist, queue_size=5)
         self.sub_odom = rospy.Subscriber(self.namespace+'/odom', Odometry, self.getOdometry)
         self.reset_proxy = rospy.ServiceProxy('gazebo/reset_simulation', Empty)
         self.unpause_proxy = rospy.ServiceProxy('gazebo/unpause_physics', Empty)
         self.pause_proxy = rospy.ServiceProxy('gazebo/pause_physics', Empty)
-        self.mode = args.mode
-        # self.respawn_goal = Respawn()
+
+        # physics of tb3
+        self.max_lin_vel = 0.15
+        self.max_ang_vel = 1.5
+        self.action_bound = np.array([0.15/2, 1.5])
 
         self.min_range = 0.13
         self.cur_step = 0
-        self.episode_step = 500
+        self.steps_per_episode = 500
         self.cur_episode = 0
         self.rank_update_interval = args.rank_update_interval
 
-    def getGoalDistace(self):
-        goal_distance = round(math.hypot(self.goal_x - self.position.x, self.goal_y - self.position.y), 2)
+    def getRelativeGoal(self):
+        """
+        Description: return relative goal distance and angle based on robot frame
+        """
+        # relative goal position based on robot base frame
+        goal_pos = np.array([self.goal_x - self.position.x,
+                             self.goal_y - self.position.y])
 
-        return goal_distance
+        goal_distance = np.linalg.norm(goal_pos)
+
+        # relative goal position based on robot base frame
+        rot = np.array([[np.cos(self.heading),np.sin(self.heading)],
+                        [-np.sin(self.heading),np.cos(self.heading)]])  #(2,2)
+        goal_pose = np.matmul(rot, goal_pos[:,None])[:,0]  #(2,)
+
+        goal_angle = np.abs(np.arctan2(goal_pose[1],goal_pose[0]))
+
+        # assert np.abs(goal_distance - np.linalg.norm(goal_pose)) < 1e-5, "goal pose distance should be kept same after rotation"
+
+        return goal_distance, goal_angle, goal_pose
+
+    def lidarPreprocess(self, scan):
+        # remove inf/nan data from lidar scan
+        scan_range = np.array(scan.ranges)
+        scan_range[np.isnan(scan_range)] = 10.
+        scan_range[np.isinf(scan_range)] = 10.
+
+        return scan_range
 
     def getOdometry(self, odom):
-        # print(f'odometry is called')
         self.position = odom.pose.pose.position
         orientation = odom.pose.pose.orientation
         orientation_list = [orientation.x, orientation.y, orientation.z, orientation.w]
-        _, _, yaw = euler_from_quaternion(orientation_list)
+        _, _, self.heading = euler_from_quaternion(orientation_list)
 
-        goal_angle = math.atan2(self.goal_y - self.position.y, self.goal_x - self.position.x)
+    def getSarsa(self,scan):
+        """
+        Description:
+        args:
+            scan: list[360]
+        return:
+            state: np.array, (362,)
+        """
+        terminated = False
+        reward = 0.
 
-        heading = goal_angle - yaw
-        if heading > pi:
-            heading -= 2 * pi
+        goal_distance, goal_angle, goal_pose = self.getRelativeGoal()
+        state = self.getState(scan, goal_pose)
 
-        elif heading < -pi:
-            heading += 2 * pi
+        # goal distance reward
+        if goal_distance < self.goal_distance:
+            reward += self.goal_distance - goal_distance
+        else:
+            reward += 2 * (self.goal_distance - goal_distance)
+        self.goal_distance = goal_distance
 
-        self.heading = round(heading, 2)
+        # goal heading reward
+        if goal_angle < self.goal_angle:
+            reward += self.goal_angle - goal_angle
+        else:
+            reward += 2 * (self.goal_angle - goal_angle)
+        self.goal_angle = goal_angle
 
-    def getState(self, scan):
-        # import ipdb;ipdb.set_trace()
-        scan_range = []
-        heading = self.heading
-        done = False
+        # check collision
+        if self.min_range > np.min(state[:360]) > 0:
+            terminated = True # done because of Collision
+            reward = -200.
+            self.pub_cmd_vel.publish(Twist())
+            self.status = 'hit'
 
-        for i in range(len(scan.ranges)):
-            if scan.ranges[i] == float('Inf'):
-                scan_range.append(3.5)
-            elif np.isnan(scan.ranges[i]):
-                scan_range.append(0)
-            else:
-                scan_range.append(scan.ranges[i])
+        # check if reached goal
+        if goal_distance < 0.2:
+            terminated = True
+            reward = 200.
+            self.pub_cmd_vel.publish(Twist())
+            self.status = 'goal'
 
-        # print(f'min range is: {min(scan_range)}')
-        if self.min_range > min(scan_range) > 0:
-            # print(f'hit!')
-            done = True # done because of collision
+        return state, reward, terminated
 
-        current_distance = round(math.hypot(self.goal_x - self.position.x, self.goal_y - self.position.y),2)
-        if current_distance < 0.2:
-            self.get_goalbox = True
-            done = True # done because of goal reached
-
-        # print(f'current agent position: {self.position.x}, {self.position.y}')
-        return scan_range + [heading, current_distance], done
-
-    def setReward(self, state, done, action):
+    def getState(self, scan, goal_pose):
+        """
+        Description:
+        args:
+            scan: list[360]
+            goal_pose: np.array(2,)
+        return:
+            state: np.array, (362,)
+        """
         # pdb.set_trace()
-        yaw_reward = []
-        current_distance = state[-1]
-        heading = state[-2]
+        scan_range = self.lidarPreprocess(scan)
 
-        for i in range(5):
-            angle = -pi / 4 + heading + (pi / 8 * i) + pi / 2
-            tr = 1 - 4 * math.fabs(0.5 - math.modf(0.25 + 0.5 * angle % (2 * math.pi) / math.pi)[0])
-            yaw_reward.append(tr)
-
-        distance_rate = 2 ** (current_distance / self.goal_distance)
-        reward = ((round(yaw_reward[action] * 5, 2)) * distance_rate)
-
-        if reward < -100 or reward > 100:
-            # pdb.set_trace()
-            print(f'distance rate is: {distance_rate}, '
-                  f'yaw_reward is: {yaw_reward[action]}')
-            reward = reward
-        if done:
-            if self.get_goalbox: # done because of goal reached
-                # rospy.loginfo("Goal!")
-                reward = 200
-                self.pub_cmd_vel.publish(Twist())
-                self.get_goalbox = False
-                self.status = 'goal'
-            else:  # done because of collision
-                # rospy.loginfo("Collision!!")
-                reward = -200
-                self.pub_cmd_vel.publish(Twist())
-                self.status = 'hit'
-
-        return reward
+        return np.concatenate((scan_range, goal_pose), axis=0)
 
     def step(self, action):
-        max_angular_vel = 1.5
-        ang_vel = ((self.action_size - 1)/2 - action) * max_angular_vel * 0.5
+        '''
+        Description: env step() function
+        args:
+            action: (2,)
+        return:
+        '''
+        if self.mode == 'continuous':
+            action = (action + np.array([1.,0.])) * self.action_bound
 
-        vel_cmd = Twist()
-        vel_cmd.linear.x = 0.15
-        vel_cmd.angular.z = ang_vel
-        self.pub_cmd_vel.publish(vel_cmd)
-        # exec_time = time.time()
+            vel_cmd = Twist()
+            vel_cmd.linear.x = action[0]
+            vel_cmd.angular.z = action[1]
+            self.pub_cmd_vel.publish(vel_cmd)
+        else:
+            max_angular_vel = 1.5
+            ang_vel = ((self.action_size - 1)/2 - action) * max_angular_vel * 0.5
+
+            vel_cmd = Twist()
+            vel_cmd.linear.x = 0.15
+            vel_cmd.angular.z = ang_vel
+            self.pub_cmd_vel.publish(vel_cmd)
 
         # waiting more or less equal to 0.2 s until scan data received, stable behavior
         data = None
@@ -155,28 +178,32 @@ class Env(gym.Env):
             except:
                 pass
 
-        # print(f'waiting scan data duration is: {time.time() - exec_time}')
-        state, done = self.getState(data)
-        reward = self.setReward(state, done, action)
+        state, reward, done = self.getSarsa(data)
 
         self.cur_step += 1
         truncated = False
-        if self.cur_step >= self.episode_step:
+        if self.cur_step >= self.steps_per_episode:
             truncated = True
-            self.status = 'timelimited'
+            self.status = 'truncated'
 
         # print(f'cur_step:{self.cur_step}, '
-        #     f'reward:{reward:.5f}, '
+        #       f'reward:{reward:.5f}, '
         #       f'done:{done}, '
         #       f'truncated:{truncated}')
+
         return np.asarray(state), reward, done, truncated, {"status": self.status}
 
     def collect_step(self, action):
+        '''
+        Description: env step() function
+        args:
+            action: (2,)
+        return:
+        '''
         vel_cmd = Twist()
         vel_cmd.linear.x = action[0]
         vel_cmd.angular.z = action[1]
         self.pub_cmd_vel.publish(vel_cmd)
-        # exec_time = time.time()
 
         # waiting more or less equal to 0.2 s until scan data received, stable behavior
         data = None
@@ -186,15 +213,12 @@ class Env(gym.Env):
             except:
                 pass
 
-        # print(f'waiting scan data duration is: {time.time() - exec_time}')
-        state, done = self.getState(data)
-        reward = self.setReward(state, done, action)
+        state, reward, done = self.getSarsa(data)
 
         self.cur_step += 1
         truncated = False
         if self.cur_step >= self.episode_step:
             truncated = True
-            self.status = 'timelimited'
 
         return np.asarray(state), reward, done, truncated, {"status": self.status}
 
@@ -212,9 +236,6 @@ class Env(gym.Env):
             print("gazebo/reset_simulation service call failed")
 
         # pdb.set_trace()
-        if self.mode == 'test':
-            # randomly set rank number
-            self.rank = random.randint(0,15) 
         self.reset_model() #reinitialize model starting position
 
         data = None
@@ -224,14 +245,9 @@ class Env(gym.Env):
             except:
                 pass
 
-        if self.initGoal:
-            # self.goal_x, self.goal_y = self.respawn_goal.getPosition()
-            # _,_,self.goal_x, self.goal_y = self.random_pts_map()
-            self.initGoal = False
-
-        self.status = 'running'
-        self.goal_distance = self.getGoalDistace()
-        state, done = self.getState(data)
+        self.status = 'initialized'
+        self.goal_distance, self.goal_angle, goal_pose = self.getRelativeGoal()
+        state = self.getState(data, goal_pose)
 
         self.cur_step = 0
         self.cur_episode += 1
@@ -248,12 +264,17 @@ class Env(gym.Env):
         state_msg.pose.position.x, state_msg.pose.position.y, self.goal_x, self.goal_y = self.random_pts_map()
         self.init_x = state_msg.pose.position.x
         self.init_y = state_msg.pose.position.y
-        # state_msg.pose.position.z = 0.3
+
         # randomly initialize orientation
         yaw = np.pi * (random.random() * 2 - 1.)
         state_msg.pose.orientation.x = 0
         state_msg.pose.orientation.y = 0
         _, _, state_msg.pose.orientation.z, state_msg.pose.orientation.w = quaternion_from_euler(0.,0.,yaw)
+
+        state_msg.pose.orientation.x = 0
+        state_msg.pose.orientation.y = 0
+        state_msg.pose.orientation.z = 0
+        state_msg.pose.orientation.w = 1.
 
         # modify target cricket ball position
         target = ModelState()
@@ -300,7 +321,7 @@ class Env(gym.Env):
         # set waypoint within scan range
         # pdb.set_trace()
         dist = np.linalg.norm([y2 - y1, x2 - x1]) 
-        while dist < 0.25 or dist > 3.5:
+        while dist < 0.3 or dist > 3.5:
             x2 = np.random.randint(5) + np.random.uniform(0.16, 1-0.16) # random initialize goal position
             y2 = np.random.randint(5) + np.random.uniform(0.16, 1-0.16) # random initialize goal position
 
@@ -308,11 +329,4 @@ class Env(gym.Env):
             y2 = self.map_y + (3 - self.rank // 4) * 5 + y2
             dist = np.linalg.norm([y2 - y1, x2 - x1])
 
-        # self.rank = (self.rank + 1) % 8
-        # print(f'goal position is respawned')
-
         return x1,y1,x2,y2
-
-if __name__ == "__main__":
-    env = Env(5,362)
-    check_env(env)
