@@ -25,7 +25,11 @@ class Env(gym.Env):
             self.action_space = spaces.Discrete(args.action_size)
             self.mode = 'discrete'
         else:
-            self.action_space = spaces.Box(low=-1.,high=1.,shape=(2,),dtype=np.float32)
+            self.action_space = spaces.Box(low=-1.,high=1.,shape=(args.action_size,),dtype=np.float32)
+            # self.action_space = spaces.Box(low=np.array([0.,-1.5]),
+            #                                high=np.array([0.15,1.5]),
+            #                                shape=(args.action_size,),
+            #                                dtype=np.float32)
             self.mode = 'continuous'
         self.observation_space = spaces.Box(low=-np.inf,high=np.inf,shape=(362,),dtype=np.float32)
         self.goal_x = 0
@@ -155,7 +159,11 @@ class Env(gym.Env):
         return:
         '''
         if self.mode == 'continuous':
+            assert action[0] >= -1. and action[0] <= 1., f"linear velocity is not correct: {action[0]}"
+            assert action[1] >= -1. and action[1] <= 1., f"angular velocity is not correct: {action[1]}"
             action = (action + np.array([1.,0.])) * self.action_bound
+            assert action[0] >= 0. and action[0] <= 0.15, f"linear velocity is not correct: {action[0]}"
+            assert action[1] >= -1.5 and action[1] <= 1.5, f"angular velocity is not correct: {action[1]}"
 
             vel_cmd = Twist()
             vel_cmd.linear.x = action[0]
@@ -273,8 +281,8 @@ class Env(gym.Env):
 
         state_msg.pose.orientation.x = 0
         state_msg.pose.orientation.y = 0
-        state_msg.pose.orientation.z = 0
-        state_msg.pose.orientation.w = 1.
+        # state_msg.pose.orientation.z = 0
+        # state_msg.pose.orientation.w = 1.
 
         # modify target cricket ball position
         target = ModelState()
@@ -303,41 +311,51 @@ class Env(gym.Env):
         """
         # pdb.set_trace()
         # print(f'goal position is going to be reset')
-        rx1,rx2 = np.random.uniform(0.16,1-0.16), np.random.uniform(0.16,1-0.16)
-        ry1,ry2 = np.random.uniform(0.16,1-0.16), np.random.uniform(0.16,1-0.16)
-
-        x1,x2,y1,y2 = rx1,rx2,ry1,ry2
-        dist = np.linalg.norm([x1-x2,y1-y2])
+        rx1,rx2 = np.random.uniform(0.2,1-0.2), np.random.uniform(0.2,1-0.2)
+        ry1,ry2 = np.random.uniform(0.2,1-0.2), np.random.uniform(0.2,1-0.2)
 
         if self.rank == 0:
-            while dist < 0.3 or dist > 4.:
+            while True:
                 x1 = np.random.randint(5) + rx1
                 x2 = np.random.randint(5) + rx2
                 y1 = np.random.randint(5) + ry1
                 y2 = np.random.randint(5) + ry2
                 dist = np.linalg.norm([x1-x2,y1-y2])
+                if 4. > dist > 0.3:
+                    break
         elif self.rank == 1:
-            while dist < 0.3 or dist > 4.:
-                x1 = np.array([2,1,1])[np.random.randint(3)] + rx1
-                x2 = np.array([2,3,3])[np.random.randint(3)] + rx2
-                y1 = np.array([1,1,2])[np.random.randint(3)] + ry1
-                y2 = np.array([3,3,2])[np.random.randint(3)] + ry2
+            while True:
+                xy1 = np.array([[2,1],[1,1],[1,2]])[np.random.randint(3)]
+                x1 = xy1[0] + rx1
+                y1 = xy1[1] + ry1
+                xy2 = np.array([[3,2],[3,3],[2,3]])[np.random.randint(3)]
+                x2 = xy2[0] + rx2
+                y2 = xy2[1] + ry2
                 dist = np.linalg.norm([x1-x2,y1-y2])
+                if 4. > dist > 0.3:
+                    break
         elif self.rank == 2:
-            while dist < 0.3 or dist > 4.:
-                x1 = np.array([0,1,1])[np.random.randint(3)] + rx1
-                x2 = np.array([3,3,4])[np.random.randint(3)] + rx2
-                y1 = np.array([1,1,0])[np.random.randint(3)] + ry1
-                y2 = np.array([4,3,3])[np.random.randint(3)] + ry2
+            while True:
+                xy1 = np.array([[0,1],[1,1],[1,0]])[np.random.randint(3)]
+                x1 = xy1[0] + rx1
+                y1 = xy1[1] + ry1
+                xy2 = np.array([[3,4],[3,3],[4,3]])[np.random.randint(3)]
+                x2 = xy2[0] + rx2
+                y2 = xy2[1] + ry2
                 dist = np.linalg.norm([x1-x2,y1-y2])
-        elif self.rank == 3:
-            while dist < 0.3 or dist > 4.:
-                x1 = np.array([0,1,1])[np.random.randint(3)] + rx1
-                x2 = np.array([3,3,4])[np.random.randint(3)] + rx2
-                y1 = np.array([1,1,0])[np.random.randint(3)] + ry1
-                y2 = np.array([4,3,3])[np.random.randint(3)] + ry2
+                if 4. > dist > 0.3:
+                    break
+        else:
+            while True:
+                xy1 = np.array([[0,1],[1,1],[1,0]])[np.random.randint(3)]
+                x1 = xy1[0] + rx1
+                y1 = xy1[1] + ry1
+                xy2 = np.array([[3,4],[3,3],[4,3]])[np.random.randint(3)]
+                x2 = xy2[0] + rx2
+                y2 = xy2[1] + ry2
                 dist = np.linalg.norm([x1-x2,y1-y2])
-
+                if 4. > dist > 0.3:
+                    break
         x1 = self.map_x + self.rank * 5 + x1
         y1 = self.map_y + y1
 

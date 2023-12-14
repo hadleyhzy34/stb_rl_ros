@@ -2,7 +2,6 @@ import rospy
 import random
 import csv
 import argparse
-import json
 import numpy as np
 import pdb
 from std_msgs.msg import Float32MultiArray
@@ -10,61 +9,59 @@ import torch
 import torch.nn as nn
 
 # from env.env import Env
-from dataloader.type import SarsaModel
-from env.env_tb3 import Env
+from env.con_env import Env
+import string
+import pandas as pd
 
 
 def collect(args):
-    # pdb.set_trace()
     rospy.init_node(args.namespace)
 
     EPISODES = args.episodes
 
     env = Env(args.state_size, args.action_size)
 
-    file_idx = 0
-    step_data = []
+    action_bound = np.array([0.15 / 2, 1.5])
+
+    file_index = 0
+    line_count = 0
 
     for _ in range(EPISODES):
         done = False
-        state, _ = env.reset()
+        state, _ = env.gc_reset()
 
         for _ in range(args.episode_step):
-            action = np.random.random(2) * 2 - 1.0  # [-1,1)
+            action = (np.random.random((2,)) * 2 + np.array([0, -1.0])) * action_bound
+            # pdb.set_trace()
+
+            assert (
+                action[0] >= 0 and action[0] <= 0.15
+            ), f"linear velocity is not in range: {action[0]}"
+            assert (
+                action[1] >= -1.5 and action[1] <= 1.5
+            ), f"angular velocity is not in range: {action[1]}"
 
             # execute actions and wait until next scan(state)
-            next_state, reward, done, truncated, info = env.step(action)
+            next_state, reward, done, truncated, info = env.gc_collect_step(action)
+
+            # pdb.set_trace()
+            srsda = np.concatenate([state, [reward], next_state, [done], action])
 
             if not done:
-                sarsa_data = SarsaModel(
-                    state=state.tolist(),
-                    reward=reward,
-                    next_state=next_state.tolist(),
-                    done=done,
-                    truncated=truncated,
-                    action=action.tolist(),
-                )
-
-                # pydantic model to json data
-                sarsa_json = sarsa_data.model_dump_json()
-                step_data.append(sarsa_json)
+                with open(f"checkpoint/dataset_{file_index}.csv", "a") as f:
+                    np.savetxt(f, srsda, fmt="%1.4f", delimiter=",", newline="\n")
+                    line_count += 1
 
             # set next state as next step's current state
             state = next_state
 
+            # reset rank number randomly
+            env.rank = random.randint(0, 15)
+
             # write data to a new file after 100 samples
-            if len(step_data) == 100:
-                with open(f"checkpoint/dataset_{file_idx}.json", "w") as f:
-                    f.write(json.dumps(step_data))
-
-                print(f"file {file_idx} saved")
-                # # check
-                # pdb.set_trace()
-                # with open(f"checkpoint/dataset_{file_idx}.json", "r") as f:
-                #     json_object = json.load(f)
-
-                file_idx += 1
-                step_data = []
+            if line_count == 100:
+                line_count = 0
+                file_index += 1
 
             if done or truncated:
                 break

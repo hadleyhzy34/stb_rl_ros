@@ -14,6 +14,7 @@ from util.log import TensorboardCallback
 from torch.utils.tensorboard import SummaryWriter
 import string
 from stable_baselines3 import DQN_CQL, DQN
+from stable_baselines3 import TD3, TD3_BC, PPO
 from stable_baselines3.common.logger import configure
 
 def train(args):
@@ -27,27 +28,55 @@ def train(args):
 
     env = Env(args)
 
-    if args.cql == 'True':
-        model = DQN_CQL("MlpPolicy", env,
-                        learning_starts=args.learning_starts,
+    if args.model == 'DQN':
+        if args.cql == 'True':
+            model = DQN_CQL("MlpPolicy", env,
+                            learning_starts=args.learning_starts,
+                            batch_size=args.batch_size,
+                            tau=args.tau,
+                            train_freq=1,
+                            target_update_interval=args.target_update_interval,
+                            buffer_size=args.replay_buffer_size,
+                            stats_window_size=1,
+                            exploration_final_eps=args.exploration_final_eps,
+                            verbose=1)
+        else:
+            model = DQN("MlpPolicy", env,
+                            learning_starts=args.learning_starts,
+                            batch_size=args.batch_size,
+                            tau=args.tau,
+                            train_freq=1,
+                            target_update_interval=args.target_update_interval,
+                            buffer_size=args.replay_buffer_size,
+                            stats_window_size=1,
+                            exploration_final_eps=args.exploration_final_eps,
+                            verbose=1)
+    elif args.model == 'TD3':
+        if args.bc == 'True':
+            model = TD3_BC("MlpPolicy", env,
+                            learning_starts=args.learning_starts,
+                            batch_size=args.batch_size,
+                            tau=args.tau,
+                            train_freq=1,
+                            buffer_size=args.replay_buffer_size,
+                            stats_window_size=1,
+                            verbose=1)
+        else:
+            model = TD3("MlpPolicy", env,
+                         learning_starts=args.learning_starts,
+                         batch_size=args.batch_size,
+                         tau=args.tau,
+                         train_freq=1,
+                         buffer_size=args.replay_buffer_size,
+                         stats_window_size=1,
+                         verbose=1)
+    elif args.model == 'PPO':
+            model = PPO("MlpPolicy",
+                        env,
+                        n_steps=512,
                         batch_size=args.batch_size,
-                        tau=args.tau,
-                        train_freq=1,
-                        target_update_interval=args.target_update_interval,
-                        buffer_size=args.replay_buffer_size,
+                        # buffer_size=args.replay_buffer_size,
                         stats_window_size=1,
-                        exploration_final_eps=args.exploration_final_eps,
-                        verbose=1)
-    else:
-        model = DQN("MlpPolicy", env,
-                        learning_starts=args.learning_starts,
-                        batch_size=args.batch_size,
-                        tau=args.tau,
-                        train_freq=1,
-                        target_update_interval=args.target_update_interval,
-                        buffer_size=args.replay_buffer_size,
-                        stats_window_size=1,
-                        exploration_final_eps=args.exploration_final_eps,
                         verbose=1)
 
     # set up logger
@@ -62,15 +91,22 @@ def train(args):
 
     model_name = ''
     if args.continuous == 'True':
-        model_name = 'con_dqn_'
+        model_name = 'con'
     else:
-        model_name = 'dis_dqn_'
-    if args.cql == 'True':
-        model_name += 'wcql'
+        model_name = 'dis'
+    if args.model == 'DQN':
+        model_name += '_dqn'
+        if args.cql == 'True':
+            model_name += '_wcql'
+        else:
+            model_name += '_ocql'
     else:
-        model_name += 'ocql'
+        model_name += '_td3'
+        if args.bc == '_bc':
+            model_name += '_wbc'
+        else:
+            model_name += '_obc'
     model.save(f"weights/{model_name}_{args.total_timesteps}")
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -89,9 +125,11 @@ if __name__ == '__main__':
     parser.add_argument('--exploration_final_eps', type=float, default=0.01)
     parser.add_argument('--target_update_interval', type=int, default=1)
     parser.add_argument('--total_timesteps', type=int, default=100_000)
-    parser.add_argument('--mode', type=str, default='train')
+    parser.add_argument('--train', type=str, default='True')
     parser.add_argument('--cql', type=str, default='False')
+    parser.add_argument('--bc', type=str, default='False')
     parser.add_argument('--continuous', type = str, default = 'False')
+    parser.add_argument('--model', type=str, default = 'DQN')
 
     args = parser.parse_args()
     train(args)

@@ -16,6 +16,10 @@ run/
 runs/
 runs*/
 
+*.pt
+*.pth
+*.csv
+*.json
 *.zip
 */*.pyc
 *.pyc

@@ -11,8 +11,15 @@ def print_model(args):
     else:
         cql = "-cql"
 
+    if args.bc == 'True':
+        bc = "+bc"
+    else:
+        bc = '-bc'
+
     print(f"mode: {mode}||"
+        f"model: {args.model}||"
         f"cql: {cql}||"
+        f"bc: {bc}||"
         f"state_dim: {args.state_size}||"
         f"action_dim: {args.action_size}||"
         f"learning_starts: {args.learning_starts}||"
