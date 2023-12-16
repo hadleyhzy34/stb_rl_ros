@@ -238,27 +238,32 @@ class Env(gym.Env):
         Returns:
             state, info
         """
-        rospy.wait_for_service("gazebo/reset_simulation")
-        try:
-            self.reset_proxy()
-        except rospy.ServiceException as e:
-            print(f"gazebo/reset_simulation service call failed: {e}")
+        done = True
+        state = np.empty((366,), dtype=np.float32)
 
-        # pdb.set_trace()
-        self.reset_model()  # reinitialize model starting position
-
-        data = None
-        while data is None:
+        while done:
+            rospy.wait_for_service("gazebo/reset_simulation")
             try:
-                data = rospy.wait_for_message(
-                    self.namespace + "/scan", LaserScan, timeout=5
-                )
-            except Exception as err:
-                print(f"message not received: {err}")
+                self.reset_proxy()
+            except rospy.ServiceException as e:
+                print(f"gazebo/reset_simulation service call failed: {e}")
+
+            # pdb.set_trace()
+            self.reset_model()  # reinitialize model starting position
+
+            data = None
+            while data is None:
+                try:
+                    data = rospy.wait_for_message(
+                        self.namespace + "/scan", LaserScan, timeout=5
+                    )
+                except Exception as err:
+                    print(f"message not received: {err}")
+
+            state[:] = self.get_state(data)
+            done, _ = self.get_done(state)
 
         self.status = "running"
-
-        state = self.get_state(data)
 
         # reset current step number
         self.cur_step = 0
