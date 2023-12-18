@@ -89,7 +89,7 @@ def farthest_point_sample(xyz, npoint):
     batch_indices = torch.arange(B, dtype=torch.long).to(device)
     for i in range(npoint):
         centroids[:, i] = farthest
-        centroid = xyz[batch_indices, farthest, :].view(B, 1, 3)
+        centroid = xyz[batch_indices, farthest, :].view(B, 1, C)
         dist = torch.sum((xyz - centroid) ** 2, -1)
         distance = torch.min(distance, dist)
         farthest = torch.max(distance, -1)[1]
@@ -134,6 +134,83 @@ def knn_point(nsample, xyz, new_xyz):
     _, group_idx = torch.topk(sqrdists, nsample, dim=-1, largest=False, sorted=False)
     return group_idx
 
+
+class LocalGrouper2D(nn.Module):
+    def __init__(
+        self, channel, groups, kneighbors, normalize="center", **kwargs
+    ):
+        """
+        Give xyz[b,p,3] and fea[b,p,d], return new_xyz[b,g,3] and new_fea[b,g,k,d]
+        :param groups: groups number
+        :param kneighbors: k-nerighbors
+        :param kwargs: others
+        """
+        super(LocalGrouper2D, self).__init__()
+        self.groups = groups
+        self.kneighbors = kneighbors
+        if normalize is not None:
+            self.normalize = normalize.lower()
+        else:
+            self.normalize = None
+        if self.normalize not in ["center", "anchor"]:
+            print(
+                f"Unrecognized normalize parameter (self.normalize), set to None. Should be one of [center, anchor]."
+            )
+            self.normalize = None
+        if self.normalize is not None:
+            self.affine_alpha = nn.Parameter(
+                torch.ones([1, 1, 1, channel])
+            )
+            self.affine_beta = nn.Parameter(
+                torch.zeros([1, 1, 1, channel])
+            )
+
+    def forward(self, xy, points):
+        """
+        args:
+            xy: (b,n,2)
+            points: (b,n,d)
+        return:
+            new_xy: (b,g,2)
+            new_points: (b,g,k,d+d)
+        """
+        # pdb.set_trace()
+        batch = xy.shape[0]
+        # xy = xy.contiguous()  # xyz [btach, points, xyz]
+
+        # fps_idx = torch.multinomial(torch.linspace(0, N - 1, steps=N).repeat(B, 1).to(xyz.device), num_samples=self.groups, replacement=False).long()
+        fps_idx = farthest_point_sample(xy, self.groups).long()
+        # fps_idx = pointnet2_utils.furthest_point_sample(
+        #     xyz, self.groups
+        # ).long()  # [B, npoint]
+        new_xy = index_points(xy, fps_idx)  # (b,g,2)
+        new_points = index_points(points, fps_idx)  # (b,g,d)
+
+        idx = knn_point(self.kneighbors, xy, new_xy)  #(b,g,k)
+
+        # idx = query_ball_point(radius, nsample, xyz, new_xyz)
+        grouped_xy = index_points(xy, idx)  # (b, g, k, 2)
+        grouped_points = index_points(points, idx)  # (b, g, k, d)
+
+        mean = new_points.unsqueeze(-2)  #(b,g,1,d)
+
+        std = (
+            torch.std((grouped_points - mean).reshape(batch, -1), dim=-1, keepdim=True)
+            .unsqueeze(dim=-1)
+            .unsqueeze(dim=-1)
+        )
+
+        grouped_points = (grouped_points - mean) / (std + 1e-5)
+        grouped_points = self.affine_alpha * grouped_points + self.affine_beta
+
+        new_points = torch.cat(
+            [
+                grouped_points,
+                new_points.view(batch, self.groups, 1, -1).repeat(1, 1, self.kneighbors, 1),
+            ],
+            dim=-1,
+        )
+        return new_xy, new_points
 
 class LocalGrouper(nn.Module):
     def __init__(
@@ -330,6 +407,7 @@ class PreExtraction(nn.Module):
         self.operation = nn.Sequential(*operation)
 
     def forward(self, x):
+        # pdb.set_trace()
         b, n, s, d = x.size()  # torch.Size([32, 512, 32, 6])
         x = x.permute(0, 1, 3, 2)
         x = x.reshape(-1, d, s)
@@ -373,6 +451,99 @@ class PosExtraction(nn.Module):
     def forward(self, x):  # [b, d, g]
         return self.operation(x)
 
+
+class Backbone(nn.Module):
+    def __init__(
+        self,
+        hidden_dim = 1024,
+        embed_dim=64,
+        groups=1,
+        res_expansion=1.0,
+        activation="relu",
+        bias=True,
+        use_xyz=True,
+        normalize="center",
+        dim_expansion=[2, 2, 2],
+        pre_blocks=[2, 2, 2],
+        pos_blocks=[2, 2, 2],
+        k_neighbors=[16, 16, 16],
+        reducers=[3, 3, 3],
+        **kwargs,
+    ):
+        super(Backbone, self).__init__()
+        self.stages = len(pre_blocks)
+        self.embedding = ConvBNReLU1D(3, embed_dim, bias=bias, activation=activation)
+        assert (
+            len(pre_blocks)
+            == len(k_neighbors)
+            == len(reducers)
+            == len(pos_blocks)
+            == len(dim_expansion)
+        ), "Please check stage number consistent for pre_blocks, pos_blocks k_neighbors, reducers."
+        self.local_grouper_list = nn.ModuleList()
+        self.pre_blocks_list = nn.ModuleList()
+        self.pos_blocks_list = nn.ModuleList()
+        last_channel = embed_dim
+        # anchor points based on 2d 360 degree lidar
+        anchor_points = 360
+        for i in range(len(pre_blocks)):
+            out_channel = last_channel * dim_expansion[i]
+            pre_block_num = pre_blocks[i]
+            pos_block_num = pos_blocks[i]
+            kneighbor = k_neighbors[i]
+            reduce = reducers[i]
+            anchor_points = anchor_points // reduce
+            # append local_grouper_list
+            local_grouper = LocalGrouper2D(
+                last_channel, anchor_points, kneighbor, normalize
+            )  # [b,g,k,d]
+            self.local_grouper_list.append(local_grouper)
+            # append pre_block_list
+            print(f'current last channel is: {last_channel,out_channel}')
+            pre_block_module = PreExtraction(
+                last_channel,
+                out_channel,
+                pre_block_num,
+                groups=groups,
+                res_expansion=res_expansion,
+                bias=bias,
+                activation=activation,
+                use_xyz=use_xyz,
+            )
+            self.pre_blocks_list.append(pre_block_module)
+            # append pos_block_list
+            pos_block_module = PosExtraction(
+                out_channel,
+                pos_block_num,
+                groups=groups,
+                res_expansion=res_expansion,
+                bias=bias,
+                activation=activation,
+            )
+            self.pos_blocks_list.append(pos_block_module)
+
+            last_channel = out_channel
+
+    def forward(self, x):
+        """
+        Description: forward
+        args:
+            x: torch.float32,(b,c,n) c=(x,y,label)
+        return:
+        """
+        pdb.set_trace()
+        xy = x[:,:2,:].permute(0,2,1)  #(b,n,2)
+        x = self.embedding(x)  # b,d,n
+        for i in range(self.stages):
+            # Give xyz[b, p, 3] and fea[b, p, d], return new_xyz[b, g, 3] and new_fea[b, g, k, d]
+            xy, x = self.local_grouper_list[i](
+                xy, x.permute(0, 2, 1)
+            )  # [b,g,3]  [b,g,k,d]
+            x = self.pre_blocks_list[i](x)  # [b,d,g]
+            x = self.pos_blocks_list[i](x)  # [b,d,g]
+
+        x = F.adaptive_max_pool1d(x, 1).squeeze(dim=-1)
+        return x
 
 class Model(nn.Module):
     def __init__(
@@ -517,10 +688,26 @@ def pointMLPElite(num_classes=40, **kwargs) -> Model:
         **kwargs,
     )
 
+def policy() -> Backbone:
+    return Backbone(
+        embed_dim=64,
+        groups=1,
+        res_expansion=1.0,
+        activation="relu",
+        bias=False,
+        use_xyz=False,
+        normalize="anchor",
+        dim_expansion=[2, 2, 2],
+        pre_blocks=[2, 2, 2],
+        pos_blocks=[2, 2, 2],
+        k_neighbors=[16,16,16],
+        reducers=[2, 2, 2],
+    )
 
 if __name__ == "__main__":
     data = torch.rand(2, 3, 300)
     print("===> testing pointMLP ...")
-    model = pointMLP()
+    # model = pointMLP()
+    model = policy()
     out = model(data)
     print(out.shape)

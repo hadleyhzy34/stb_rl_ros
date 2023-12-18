@@ -65,6 +65,11 @@ class Agent(nn.Module):
     def cql_loss(self, q_values, current_action):
         """
         Description: Computes the CQL loss for a batch of Q-values and actions.
+        args:
+            q_values: (b,a)
+            current_actions: (b,1)
+        return:
+            loss: float
         """
         logsumexp = torch.logsumexp(q_values, dim=1, keepdim=True)
         q_a = q_values.gather(1, current_action)
