@@ -12,11 +12,23 @@ import torch.nn as nn
 # from env.env import Env
 from dataloader.type import SarsaModel
 from env.env_tb3 import Env
+from agent.por import Por
 
 
 def collect(args):
     # pdb.set_trace()
     rospy.init_node(args.namespace)
+
+    agent = Por(
+        args.state_size,
+        args.action_size,
+        batch_size=args.batch_size,
+        epsilon=0.9,
+        epsilon_decay=0.95,
+        epsilon_min=0.01,
+        lr=1e-3,
+        device="cpu",
+    )
 
     EPISODES = args.episodes
 
@@ -36,6 +48,11 @@ def collect(args):
             next_state, reward, done, truncated, info = env.step(action)
 
             if not done:
+                # check if goal pose too closed to obstacles
+                if not agent.validate_state(state):
+                    # print("state value is not correct")
+                    continue
+
                 sarsa_data = SarsaModel(
                     state=state.tolist(),
                     reward=reward,
@@ -54,7 +71,7 @@ def collect(args):
 
             # write data to a new file after 100 samples
             if len(step_data) == 100:
-                with open(f"checkpoint/dataset_{file_idx}.json", "w") as f:
+                with open(f"checkpoint/raw/dataset_{file_idx}.json", "w") as f:
                     f.write(json.dumps(step_data))
 
                 print(f"file {file_idx} saved")

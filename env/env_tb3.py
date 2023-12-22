@@ -161,6 +161,8 @@ class Env(gym.Env):
             self.pub_cmd_vel.publish(Twist())
             self.status = "time out"
 
+        if terminated or truncated:
+            print(f"done cause :{self.status}")
         return terminated, truncated
 
     def get_state(self, scan: LaserScan) -> np.ndarray:
@@ -241,6 +243,9 @@ class Env(gym.Env):
         done = True
         state = np.empty((366,), dtype=np.float32)
 
+        # reset steps for a new episode
+        self.cur_step = 0
+
         while done:
             rospy.wait_for_service("gazebo/reset_simulation")
             try:
@@ -265,15 +270,13 @@ class Env(gym.Env):
 
         self.status = "running"
 
-        # reset current step number
-        self.cur_step = 0
-
         return state, {"status": self.status}
 
     def reset_model(self) -> None:
         """
         reset model position and orientation
         """
+        print("model is being reset")
         state_msg = ModelState()
         state_msg.model_name = self.namespace
 
@@ -329,7 +332,7 @@ class Env(gym.Env):
             idx_2 = block_idy_2 * 5 + block_idx_2
 
             if idx_1 == 12 or idx_2 == 12:
-                if self.rank in [1, 2, 3, 4, 8, 11]:
+                if self.rank in [1, 2, 3, 4, 8, 11, 14]:
                     continue
             elif idx_1 == 6 or idx_2 == 6:
                 if self.rank in [4, 5, 10, 12]:
@@ -338,36 +341,40 @@ class Env(gym.Env):
                 if self.rank in [4, 5, 12, 14]:
                     continue
             elif idx_1 == 7 or idx_2 == 7 or idx_1 == 17 or idx_2 == 17:
-                if self.rank == 6:
+                if self.rank in [6, 8]:
                     continue
             elif idx_1 == 11 or idx_2 == 11 or idx_1 == 13 or idx_2 == 13:
-                if self.rank == 7:
+                if self.rank in [7, 8]:
                     continue
 
             x1 = block_idx_1 + np.random.uniform(
-                0.16, 1 - 0.16
+                0.2, 1 - 0.2
             )  # random initialize x inside single map
             x2 = block_idx_2 + np.random.uniform(
-                0.16, 1 - 0.16
+                0.2, 1 - 0.2
             )  # random initialize goal position
             y1 = block_idy_1 + np.random.uniform(
-                0.16, 1 - 0.16
+                0.2, 1 - 0.2
             )  # random initialize y inside single map
             y2 = block_idy_2 + np.random.uniform(
-                0.16, 1 - 0.16
+                0.2, 1 - 0.2
             )  # random initialize goal position
 
             # update dist info
             dist = np.linalg.norm([y2 - y1, x2 - x1])
-
-        if mode == "random":
-            self.rank = random.randint(0, 15)
 
         x1 = self.map_x + (self.rank % 4) * 5 + x1
         y1 = self.map_y + ((15 - self.rank) // 4) * 5 + y1
 
         x2 = self.map_x + (self.rank % 4) * 5 + x2
         y2 = self.map_y + ((15 - self.rank) // 4) * 5 + y2
+
+        dist = np.linalg.norm([y2 - y1, x2 - x1])
+
+        assert dist >= 0.3 and dist < 3.5, "dist not correct"
+
+        if mode == "random":
+            self.rank = random.randint(0, 15)
 
         return x1, y1, x2, y2
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 import numpy as np
 
 
@@ -10,6 +10,10 @@ class SarsaModel(BaseModel):
     done: bool
     action: List[float]
     truncated: bool
+    state_path_x: Optional[List[float]] = None
+    state_path_y: Optional[List[float]] = None
+    next_state_path_x: Optional[List[float]] = None
+    next_state_path_y: Optional[List[float]] = None
 
 
 # class SarsaModel(BaseModel):

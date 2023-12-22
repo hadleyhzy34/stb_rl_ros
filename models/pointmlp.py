@@ -136,9 +136,7 @@ def knn_point(nsample, xyz, new_xyz):
 
 
 class LocalGrouper2D(nn.Module):
-    def __init__(
-        self, channel, groups, kneighbors, normalize="center", **kwargs
-    ):
+    def __init__(self, channel, groups, kneighbors, normalize="center", **kwargs):
         """
         Give xyz[b,p,3] and fea[b,p,d], return new_xyz[b,g,3] and new_fea[b,g,k,d]
         :param groups: groups number
@@ -158,12 +156,8 @@ class LocalGrouper2D(nn.Module):
             )
             self.normalize = None
         if self.normalize is not None:
-            self.affine_alpha = nn.Parameter(
-                torch.ones([1, 1, 1, channel])
-            )
-            self.affine_beta = nn.Parameter(
-                torch.zeros([1, 1, 1, channel])
-            )
+            self.affine_alpha = nn.Parameter(torch.ones([1, 1, 1, channel]))
+            self.affine_beta = nn.Parameter(torch.zeros([1, 1, 1, channel]))
 
     def forward(self, xy, points):
         """
@@ -186,13 +180,13 @@ class LocalGrouper2D(nn.Module):
         new_xy = index_points(xy, fps_idx)  # (b,g,2)
         new_points = index_points(points, fps_idx)  # (b,g,d)
 
-        idx = knn_point(self.kneighbors, xy, new_xy)  #(b,g,k)
+        idx = knn_point(self.kneighbors, xy, new_xy)  # (b,g,k)
 
         # idx = query_ball_point(radius, nsample, xyz, new_xyz)
         grouped_xy = index_points(xy, idx)  # (b, g, k, 2)
         grouped_points = index_points(points, idx)  # (b, g, k, d)
 
-        mean = new_points.unsqueeze(-2)  #(b,g,1,d)
+        mean = new_points.unsqueeze(-2)  # (b,g,1,d)
 
         std = (
             torch.std((grouped_points - mean).reshape(batch, -1), dim=-1, keepdim=True)
@@ -206,11 +200,14 @@ class LocalGrouper2D(nn.Module):
         new_points = torch.cat(
             [
                 grouped_points,
-                new_points.view(batch, self.groups, 1, -1).repeat(1, 1, self.kneighbors, 1),
+                new_points.view(batch, self.groups, 1, -1).repeat(
+                    1, 1, self.kneighbors, 1
+                ),
             ],
             dim=-1,
         )
         return new_xy, new_points
+
 
 class LocalGrouper(nn.Module):
     def __init__(
@@ -455,7 +452,7 @@ class PosExtraction(nn.Module):
 class Backbone(nn.Module):
     def __init__(
         self,
-        hidden_dim = 1024,
+        hidden_dim=1024,
         embed_dim=64,
         groups=1,
         res_expansion=1.0,
@@ -499,7 +496,7 @@ class Backbone(nn.Module):
             )  # [b,g,k,d]
             self.local_grouper_list.append(local_grouper)
             # append pre_block_list
-            print(f'current last channel is: {last_channel,out_channel}')
+            print(f"current last channel is: {last_channel,out_channel}")
             pre_block_module = PreExtraction(
                 last_channel,
                 out_channel,
@@ -531,8 +528,8 @@ class Backbone(nn.Module):
             x: torch.float32,(b,c,n) c=(x,y,label)
         return:
         """
-        pdb.set_trace()
-        xy = x[:,:2,:].permute(0,2,1)  #(b,n,2)
+        # pdb.set_trace()
+        xy = x[:, :2, :].permute(0, 2, 1)  # (b,n,2)
         x = self.embedding(x)  # b,d,n
         for i in range(self.stages):
             # Give xyz[b, p, 3] and fea[b, p, d], return new_xyz[b, g, 3] and new_fea[b, g, k, d]
@@ -544,6 +541,7 @@ class Backbone(nn.Module):
 
         x = F.adaptive_max_pool1d(x, 1).squeeze(dim=-1)
         return x
+
 
 class Model(nn.Module):
     def __init__(
@@ -688,6 +686,7 @@ def pointMLPElite(num_classes=40, **kwargs) -> Model:
         **kwargs,
     )
 
+
 def policy() -> Backbone:
     return Backbone(
         embed_dim=64,
@@ -700,9 +699,10 @@ def policy() -> Backbone:
         dim_expansion=[2, 2, 2],
         pre_blocks=[2, 2, 2],
         pos_blocks=[2, 2, 2],
-        k_neighbors=[16,16,16],
+        k_neighbors=[16, 16, 16],
         reducers=[2, 2, 2],
     )
+
 
 if __name__ == "__main__":
     data = torch.rand(2, 3, 300)
