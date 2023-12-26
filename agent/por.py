@@ -12,6 +12,7 @@ from typing import Tuple, List
 from models.pointmlp import Backbone
 from preprocess.dijkstra import Dijkstra
 from matplotlib import pyplot as plt
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 def soft_update(target, source, tau):
@@ -29,7 +30,7 @@ class Por(nn.Module):
         self,
         state_size,
         action_size,
-        episode_step=500,
+        episode_step=20,
         tau=0.05,
         batch_size=64,
         epsilon=0.9,
@@ -63,11 +64,11 @@ class Por(nn.Module):
         # value function
         self.value = nn.Sequential(
             nn.Linear(self.hidden_dim, 512),
-            # nn.BatchNorm1d(512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(512, 256),
-            # nn.BatchNorm1d(256),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 1),
@@ -85,17 +86,28 @@ class Por(nn.Module):
         print(f"agent training device is loaded: {self.device}")
 
         self.lr = lr
-        self.backbone_optimizer = torch.optim.Adam(
-            self.backbone.parameters(), lr=self.lr
+        self.value_optimizer = torch.optim.Adam(
+            list(self.backbone.parameters()) + list(self.value.parameters()), self.lr
         )
-        self.value_optimizer = torch.optim.Adam(self.value.parameters(), lr=self.lr)
 
         # show expert path planning animation
         self.show_animation = False
 
         # loss
+        # lambda_optimizer = lambda epoch: 0.5 * (
+        #     1.0 + math.cos(math.pi * epoch / episode_step)
+        # )
+        #
+        # self.value_lr_schedule = torch.optim.lr_scheduler.LambdaLR(
+        #     self.value_optimizer, lr_lambda=lambda_optimizer
+        # )
+        self.value_lr_schedule = CosineAnnealingLR(
+            self.value_optimizer, T_max=episode_step, eta_min=0
+        )
+
         self.loss = nn.MSELoss()
-        self.value_loss = nn.L1Loss()
+        # self.value_loss = nn.L1Loss()
+        self.value_loss = nn.MSELoss()
         self.cql = True
 
     def train_state_preprocess(
@@ -254,19 +266,29 @@ class Por(nn.Module):
 
         return value
 
-    def learn_value(self, value: torch.Tensor, path_len: torch.Tensor) -> torch.Tensor:
+    def learn_value(
+        self, state: torch.Tensor, goal: torch.Tensor, path_len: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Args:
+            state: torch.tensor, (b,360,2)
+            goal: torch.tensor, (b,2)
+            path_len: torch.tensor, (b,), int, cpu
+        Returns:
+            vloss: (1,) float
+        """
+        # (b,1)
+        value = self.get_value(state, goal)
         # pdb.set_trace()
         base = 100.0
         expert_value = base * torch.pow(0.99, path_len[:, None].to(self.device))
 
         vloss = self.value_loss(value, expert_value)
 
-        self.backbone_optimizer.zero_grad()
         self.value_optimizer.zero_grad()
 
         vloss.backward()
 
-        self.backbone_optimizer.step()
         self.value_optimizer.step()
 
         return vloss

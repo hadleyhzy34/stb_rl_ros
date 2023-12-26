@@ -1,0 +1,11 @@
+namespace: tb3
+state_size: 366
+action_size: 2
+episodes: 20
+device: cuda
+batch_size: 32
+episode_step: 500
+lr: 1.0e-3
+data_path: checkpoint/new
+weight_file: weights/value
+save_freq: 5
