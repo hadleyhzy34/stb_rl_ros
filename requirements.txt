@@ -1,0 +1,14 @@
+numpy
+opencv-python
+Pillow
+pyyaml
+requests
+scikit-image
+scipy
+tb-nightly
+torch==2.0.1
+torchvision==0.15.2
+tqdm
+yapf
+lpips
+gdown # supports downloading the large file from Google Drive
