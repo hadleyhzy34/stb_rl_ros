@@ -4,9 +4,11 @@ import numpy as np
 
 
 class SarsaModel(BaseModel):
-    state: List[float]
+    state: List[List[float]]
+    goal: List[float]
     reward: float
-    next_state: List[float]
+    next_state: List[List[float]]
+    next_state_goal: List[float]
     done: bool
     action: List[float]
     truncated: bool

@@ -1,6 +1,9 @@
 import argparse
 import os
 import json
+import math
+import random
+from matplotlib.cbook import contiguous_regions
 import numpy as np
 import torch
 from agent.por import Por
@@ -11,6 +14,34 @@ from tqdm import tqdm
 import statistics
 import time
 from dataloader.type import SarsaModel
+from typing import List, Tuple
+
+
+def state2state_full(state: torch.Tensor) -> Tuple[List[List[float]], List[float]]:
+    """
+    Args:
+        state: torch.Tensor,(366,)
+    Returns:
+        state_full: List[List(float)]
+    """
+    state_full = []
+    for i in range(360):
+        if state[i] < 4.0:
+            state_full.append(
+                [math.cos(i) * state[i].item(), math.sin(i) * state[i].item()]
+            )
+
+    if len(state_full) < 180:
+        return [], []
+
+    raw_idx = 0
+    while len(state_full) < 360:
+        x = state_full[raw_idx][0] + (random.random() - 0.5) / 20
+        y = state_full[raw_idx][1] + (random.random() - 0.5) / 20
+        state_full.append([x, y])
+        raw_idx += 1
+
+    return state_full, state[-2:].numpy().tolist()
 
 
 def train(args):
@@ -22,15 +53,16 @@ def train(args):
         epsilon_decay=0.95,
         epsilon_min=0.01,
         lr=1e-3,
-        device="cpu",
+        device=torch.device("cpu"),
     )
 
     # pdb.set_trace()
     file_idx = 0
-    for file in sorted(os.listdir("./checkpoint/raw")):
+    for file in sorted(os.listdir("./checkpoint/preprocessed")):
+        print(f"{file_idx}th {file} is being processed")
         step_data = []
 
-        with open(f"./checkpoint/raw/{file}") as f:
+        with open(f"./checkpoint/preprocessed/{file}") as f:
             data = json.load(f)  # list file
 
             for d in data:
@@ -39,22 +71,37 @@ def train(args):
                 state = torch.tensor(cur_data["state"])
                 next_state = torch.tensor(cur_data["next_state"])
 
-                state_path_x, state_path_y, state_check = agent.expert_path(
-                    state[None, :]
-                )
-                (
-                    next_state_path_x,
-                    next_state_path_y,
-                    next_state_check,
-                ) = agent.expert_path(next_state[None, :])
+                if args.expert_path == "True":
+                    state_path_x, state_path_y, state_check = agent.expert_path(
+                        state[None, :]
+                    )
+                    (
+                        next_state_path_x,
+                        next_state_path_y,
+                        next_state_check,
+                    ) = agent.expert_path(next_state[None, :])
 
-                if not state_check or not next_state_check:
+                    if not state_check or not next_state_check:
+                        continue
+                else:
+                    state_path_x = cur_data["state_path_x"]
+                    state_path_y = cur_data["state_path_y"]
+                    next_state_path_x = cur_data["next_state_path_x"]
+                    next_state_path_y = cur_data["next_state_path_y"]
+
+                state, state_goal = state2state_full(state)
+                next_state, next_state_goal = state2state_full(next_state)
+
+                if len(state) == 0 or len(next_state) == 0:
                     continue
 
+                # pdb.set_trace()
                 sarsa_data = SarsaModel(
-                    state=cur_data["state"],
+                    state=state,
+                    goal=state_goal,
                     reward=cur_data["reward"],
-                    next_state=cur_data["next_state"],
+                    next_state=next_state,
+                    next_state_goal=next_state_goal,
                     done=cur_data["done"],
                     truncated=cur_data["truncated"],
                     action=cur_data["action"],
@@ -69,9 +116,7 @@ def train(args):
                 step_data.append(sarsa_json)
 
                 if len(step_data) == 100:
-                    with open(
-                        f"checkpoint/preprocessed/dataset_{file_idx}.json", "w"
-                    ) as f:
+                    with open(f"checkpoint/new/dataset_{file_idx}.json", "w") as f:
                         f.write(json.dumps(step_data))
                     step_data = []
                     print(f"{file_idx}th file saved")
@@ -94,5 +139,7 @@ if __name__ == "__main__":
     parser.add_argument("--tau", type=float, default=0.005)
     parser.add_argument("--target_update_interval", type=int, default=1)
     parser.add_argument("--total_timesteps", type=int, default=100_000)
+    parser.add_argument("--preprocess_data", type=str, default="True")
+    parser.add_argument("--expert_path", type=str, default="False")
     args = parser.parse_args()
     train(args)

@@ -98,7 +98,26 @@ class Por(nn.Module):
         self.value_loss = nn.L1Loss()
         self.cql = True
 
-    def state_preprocess(self, state: torch.tensor) -> torch.tensor:
+    def train_state_preprocess(
+        self, state: torch.Tensor, goal: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        args:
+            state: torch.float (b,360,2)
+            goal: torch.float (b,2)
+        return:
+            preprocessed_state: torch.float, (b,3,n)
+        """
+        batch = state.shape[0]
+        state_full = torch.zeros((batch, 361, 3), device=self.device)
+
+        state_full[:, :360, :2] = state
+        state_full[:, -1, :2] = goal
+        state_full[:, -1, 2] = 1.0
+
+        return state_full.permute(0, 2, 1).contiguous()
+
+    def state_preprocess(self, state: torch.Tensor) -> torch.Tensor:
         """
         args:
             state: torch.float,(1,366),(scan+position+heading+goal)
@@ -132,7 +151,7 @@ class Por(nn.Module):
 
         return preprocessed_state.unsqueeze(0).permute(0, 2, 1)
 
-    def validate_state(self, state: torch.tensor) -> bool:
+    def validate_state(self, state: torch.Tensor) -> bool:
         """
         check if goal is too closed to obstacles
         Args:
@@ -168,7 +187,7 @@ class Por(nn.Module):
 
         return check_distance
 
-    def expert_path(self, state: torch.tensor) -> Tuple[List, List, bool]:
+    def expert_path(self, state: torch.Tensor) -> Tuple[List, List, bool]:
         """
         args:
             state: torch.float,(1,366),(scan+position+heading+goal)
@@ -223,9 +242,11 @@ class Por(nn.Module):
 
         return rx, ry, state_check
 
-    def get_value(self, state):
+    def get_value(self, state, goal):
         # pdb.set_trace()
-        state = self.state_preprocess(state)
+        # state = self.state_preprocess(state)
+
+        state = self.train_state_preprocess(state, goal)
 
         # b,c,n
         hidden_state = self.backbone(state)
@@ -233,14 +254,12 @@ class Por(nn.Module):
 
         return value
 
-    def learn_value(self, value, rx, ry):
+    def learn_value(self, value: torch.Tensor, path_len: torch.Tensor) -> torch.Tensor:
         # pdb.set_trace()
         base = 100.0
-        expert_value = base * math.pow(0.99, len(rx))
+        expert_value = base * torch.pow(0.99, path_len[:, None].to(self.device))
 
-        vloss = self.value_loss(
-            value, torch.tensor([expert_value], device=self.device).unsqueeze(0)
-        )
+        vloss = self.value_loss(value, expert_value)
 
         self.backbone_optimizer.zero_grad()
         self.value_optimizer.zero_grad()
