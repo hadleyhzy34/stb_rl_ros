@@ -125,6 +125,10 @@ class Por(nn.Module):
             self.value_optimizer, T_max=episode_step, eta_min=0
         )
 
+        self.policy_lr_schedule = CosineAnnealingLR(
+            self.policy_optimizer, T_max=episode_step, eta_min=0
+        )
+
         self.loss = nn.MSELoss()
         self.value_loss = nn.L1Loss()
         # self.value_loss = nn.MSELoss()

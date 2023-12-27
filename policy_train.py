@@ -37,7 +37,7 @@ def train():
     agent.load_state_dict(loaded_model)
 
     for i in range(1, args["episodes"] + 1):
-        print(f"current learning rate: {agent.value_optimizer.param_groups[0]['lr']}")
+        print(f"current learning rate: {agent.policy_optimizer.param_groups[0]['lr']}")
 
         value_loss = []
         # value_loss = deque(maxlen=100)
@@ -69,7 +69,8 @@ def train():
                 os.path.join(args["weight_policy_file"], "policy" + str(i) + ".pt"),
             )
 
-        agent.value_lr_schedule.step()
+        agent.policy_lr_schedule.step()
+        # agent.value_lr_schedule.step()
 
 
 if __name__ == "__main__":
