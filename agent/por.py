@@ -10,9 +10,25 @@ import torch
 import torch.nn as nn
 from typing import Tuple, List
 from models.pointmlp import Backbone
+from models.policy import GaussianPolicy
 from preprocess.dijkstra import Dijkstra
 from matplotlib import pyplot as plt
 from torch.optim.lr_scheduler import CosineAnnealingLR
+
+
+def wloss(
+    act_distri, state_value, next_state_value, actions, device=torch.device("cpu")
+):
+    # pdb.set_trace()
+    # actions = (actions + torch.tensor([1.0, 0.0], device=device)) * torch.tensor(
+    #     [0.15 / 2, 1.5], device=device
+    # )
+    assert actions.max() <= 1.0 and actions.min() >= -1.0, "actions range not correct"
+    mu = next_state_value - state_value
+    loss = mu * act_distri.log_prob(actions)[:, None]
+    loss = -(mu > 0).float() * loss + (mu < 0).float() * loss
+
+    return torch.mean(loss)
 
 
 def soft_update(target, source, tau):
@@ -64,15 +80,19 @@ class Por(nn.Module):
         # value function
         self.value = nn.Sequential(
             nn.Linear(self.hidden_dim, 512),
-            nn.BatchNorm1d(512),
+            # nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
+            # nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 1),
         ).to(device)
+
+        self.policy = GaussianPolicy(action_size, self.backbone, self.hidden_dim).to(
+            device
+        )
 
         # maximum steps per episode
         self.episode_step = episode_step
@@ -89,7 +109,7 @@ class Por(nn.Module):
         self.value_optimizer = torch.optim.Adam(
             list(self.backbone.parameters()) + list(self.value.parameters()), self.lr
         )
-
+        self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), self.lr)
         # show expert path planning animation
         self.show_animation = False
 
@@ -106,8 +126,8 @@ class Por(nn.Module):
         )
 
         self.loss = nn.MSELoss()
-        # self.value_loss = nn.L1Loss()
-        self.value_loss = nn.MSELoss()
+        self.value_loss = nn.L1Loss()
+        # self.value_loss = nn.MSELoss()
         self.cql = True
 
     def train_state_preprocess(
@@ -254,12 +274,32 @@ class Por(nn.Module):
 
         return rx, ry, state_check
 
-    def get_value(self, state, goal):
+    def learn_act(self, state, goal, next_state, next_state_goal, actions):
         # pdb.set_trace()
-        # state = self.state_preprocess(state)
-
         state = self.train_state_preprocess(state, goal)
+        next_state = self.train_state_preprocess(next_state, next_state_goal)
 
+        state_value = self.get_value(state).detach()
+        next_state_value = self.get_value(next_state).detach()
+
+        act_distri = self.policy(state)
+
+        w_loss = wloss(act_distri, state_value, next_state_value, actions, self.device)
+        self.policy_optimizer.zero_grad()
+
+        w_loss.backward()
+
+        self.policy_optimizer.step()
+
+        return w_loss
+
+    def get_value(self, state: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            state: torch.tensor, float, (b,3,n)
+        Returns:
+            value: (b,1)
+        """
         # b,c,n
         hidden_state = self.backbone(state)
         value = self.value(hidden_state)
@@ -277,11 +317,17 @@ class Por(nn.Module):
         Returns:
             vloss: (1,) float
         """
+        state = self.train_state_preprocess(state, goal)
         # (b,1)
-        value = self.get_value(state, goal)
+        value = self.get_value(state)
+
+        # exponential based value function
         # pdb.set_trace()
         base = 100.0
-        expert_value = base * torch.pow(0.99, path_len[:, None].to(self.device))
+        # expert_value = base * torch.pow(0.99, path_len[:, None].to(self.device))
+
+        # step value based function
+        expert_value = base - path_len[:, None].to(self.device)
 
         vloss = self.value_loss(value, expert_value)
 

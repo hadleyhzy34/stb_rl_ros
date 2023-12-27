@@ -32,10 +32,15 @@ def train():
     )
     agent.train()
 
+    # pdb.set_trace()
+    loaded_model = torch.load("weights/value/20.pt")
+    agent.load_state_dict(loaded_model)
+
     for i in range(1, args["episodes"] + 1):
         print(f"current learning rate: {agent.value_optimizer.param_groups[0]['lr']}")
 
-        value_loss = deque(maxlen=100)
+        value_loss = []
+        # value_loss = deque(maxlen=100)
 
         for data in (pbar := tqdm(train_dataloader)):
             (
@@ -50,7 +55,9 @@ def train():
                 path_len,
             ) = data
 
-            vloss = agent.learn_value(state, goal, path_len)
+            vloss = agent.learn_act(state, goal, next_state, next_state_goal, action)
+
+            # vloss = agent.learn_value(state, goal, path_len)
 
             value_loss.append(vloss)
             pbar.set_description(f"value loss: {statistics.fmean(value_loss)}")
@@ -58,7 +65,8 @@ def train():
 
         if i % args["save_freq"] == 0:
             torch.save(
-                agent.state_dict(), os.path.join(args["weight_file"], str(i) + ".pt")
+                agent.state_dict(),
+                os.path.join(args["weight_policy_file"], "policy" + str(i) + ".pt"),
             )
 
         agent.value_lr_schedule.step()
