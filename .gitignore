@@ -14,7 +14,6 @@ POR/
 *.pth
 *.pt
 *.csv
-checkpoint/
 test/
 log/
 data/

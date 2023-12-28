@@ -60,7 +60,7 @@ def train():
             # vloss = agent.learn_value(state, goal, path_len)
 
             value_loss.append(vloss)
-            pbar.set_description(f"value loss: {statistics.fmean(value_loss)}")
+            pbar.set_description(f"policy loss: {statistics.fmean(value_loss)}")
             pbar.refresh()
 
         if i % args["save_freq"] == 0:

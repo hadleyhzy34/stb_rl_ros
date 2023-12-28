@@ -31,6 +31,7 @@ def state2state_full(state: torch.Tensor) -> Tuple[List[List[float]], List[float
                 [math.cos(i) * state[i].item(), math.sin(i) * state[i].item()]
             )
 
+    print(len(state_full))
     if len(state_full) < 180:
         return [], []
 

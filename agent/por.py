@@ -23,10 +23,14 @@ def wloss(
     # actions = (actions + torch.tensor([1.0, 0.0], device=device)) * torch.tensor(
     #     [0.15 / 2, 1.5], device=device
     # )
+    # pdb.set_trace()
     assert actions.max() <= 1.0 and actions.min() >= -1.0, "actions range not correct"
     mu = next_state_value - state_value
-    loss = mu * act_distri.log_prob(actions)[:, None]
-    loss = -(mu > 0).float() * loss + (mu < 0).float() * loss
+    loss_positive = mu * act_distri.log_prob(actions)[:, None]
+    loss_negative = mu * torch.log(
+        1.0 - torch.exp(act_distri.log_prob(actions)[:, None])
+    )
+    loss = -(mu > 0).float() * loss_positive - (mu < 0).float() * loss_negative
 
     return torch.mean(loss)
 
