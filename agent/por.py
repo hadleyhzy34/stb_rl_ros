@@ -30,6 +30,7 @@ def wloss(
     loss_negative = mu * torch.log(
         1.0 - torch.exp(act_distri.log_prob(actions)[:, None])
     )
+    # log_probs = act_distri.log_prob(actions)[:, None]  # (b,1)
     loss = -(mu > 0).float() * loss_positive - (mu < 0).float() * loss_negative
 
     return torch.mean(loss)
@@ -191,42 +192,6 @@ class Por(nn.Module):
 
         return preprocessed_state.unsqueeze(0).permute(0, 2, 1)
 
-    def validate_state(self, state: torch.Tensor) -> bool:
-        """
-        check if goal is too closed to obstacles
-        Args:
-            state: torch.tensor, (n,)
-        Returns:
-        """
-        # pdb.set_trace()
-        idx = state[:360] < 4.0
-        xy = torch.empty((360, 2), device=self.device)[idx, :]
-
-        x = (
-            torch.cos(torch.arange(0, 360).to(self.device) * torch.pi / 180)
-            * state[:360]
-        )
-        y = (
-            torch.sin(torch.arange(0, 360).to(self.device) * torch.pi / 180)
-            * state[:360]
-        )
-
-        xy[:, 0] = x[idx]
-        xy[:, 1] = y[idx]
-
-        goal_pose = state[364:]  # (2,)
-
-        # calculate distance between obstacles and goal position
-        # pdb.set_trace()
-        dist = torch.linalg.norm(xy - goal_pose[None, :], dim=-1)
-
-        check_distance = dist.min() > 0.13
-
-        if check_distance is False:
-            pdb.set_trace()
-
-        return check_distance
-
     def expert_path(self, state: torch.Tensor) -> Tuple[List, List, bool]:
         """
         args:
@@ -301,6 +266,27 @@ class Por(nn.Module):
 
         return w_loss
 
+    def choose_action(self, state) -> Tuple[torch.Tensor, torch.Tensor]:
+        """return actions based on sampled from policy distributions
+        args:
+            state: np.ndarray, (366,)
+        return:
+            action: torch.tensor, (2,)
+            action_logprob: torch.tensor, (2,)
+        """
+        # pdb.set_trace()
+        state = torch.from_numpy(state).to(self.device)[None, :]
+        state = self.state_preprocess(state)
+
+        # val = self.get_value(state)
+        # print(f"current value is: {val}")
+        dist = self.policy(state)
+
+        action = dist.sample()
+        action_logprob = dist.log_prob(action)
+
+        return action, action_logprob
+
     def get_value(self, state: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -361,23 +347,23 @@ class Por(nn.Module):
 
         return (logsumexp - q_a).mean()
 
-    def choose_action(self, x):
-        """
-        Description:
-        args:
-            x: numpy, (state_size,)n
-        return:
-        """
-        # import ipdb;ipdb.set_trace()
-        x = torch.tensor(x, dtype=torch.float, device=self.device).unsqueeze(
-            0
-        )  # (1, state_size)
-        if np.random.uniform() <= self.epsilon:
-            return np.random.randint(0, self.action_size)
-        else:
-            q_value = self.eval_net(x).detach()
-            action = q_value.max(1)[1].item()
-            return action
+    # def choose_action(self, x):
+    #     """
+    #     Description:
+    #     args:
+    #         x: numpy, (state_size,)n
+    #     return:
+    #     """
+    #     # import ipdb;ipdb.set_trace()
+    #     x = torch.tensor(x, dtype=torch.float, device=self.device).unsqueeze(
+    #         0
+    #     )  # (1, state_size)
+    #     if np.random.uniform() <= self.epsilon:
+    #         return np.random.randint(0, self.action_size)
+    #     else:
+    #         q_value = self.eval_net(x).detach()
+    #         action = q_value.max(1)[1].item()
+    #         return action
 
     def store_transition(self, state, action, reward, next_state, done):
         # import ipdb;ipdb.set_trace()

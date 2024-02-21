@@ -27,7 +27,7 @@ def collect(args):
         epsilon_decay=0.95,
         epsilon_min=0.01,
         lr=1e-3,
-        device="cpu",
+        device=torch.device(args.device),
     )
 
     EPISODES = args.episodes

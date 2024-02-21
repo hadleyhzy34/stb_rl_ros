@@ -23,11 +23,11 @@ from typing import Tuple, List
 
 
 class Env(gym.Env):
-    def __init__(
-        self, action_size, state_size, rank_update_interval=150, namespace="tb3"
-    ):
+    def __init__(self, state_size, action_size, namespace="tb3"):
         super().__init__()
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+        self.action_space = spaces.Box(
+            low=-1.0, high=1.0, shape=(action_size,), dtype=np.float32
+        )
         # self.action_space = spaces.Discrete(action_size)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(state_size,), dtype=np.float32
